@@ -8,17 +8,25 @@ This project explores the relationship between a country's economic development 
 
 Hi! I'm Kyrie Huerta — an Economics major and Quantitative Data Analytics minor at Michigan State University. This project was inspired by personal experience and a passion for using data to explore real-world issues related to food access and health.
 
----
-
 ## 📁 Project Structure
 
-├── data/ <- CSV datasets from FAOSTAT and World Bank
-├── figures/ <- Visualizations created in R
-├── meat_consumption_analysis.Rmd <- Full analysis in RMarkdown
-├── meat_consumption_analysis.R <- Clean script with all analysis code
-├── meat_consumption_analysis.pdf <- Final report (no code)
+```
+├── data/ # CSV datasets from FAOSTAT and World Bank
+│ ├── FAOSTAT_data_meat_consumption.csv
+│ └── GDP.PER.CAPITA.csv
+│
+├── figures/ # Visualizations created in R
+│ ├── scatterplot_GDPperCapita_MeatConsumption.png
+│ ├── logGDPperCapita_MeatConsumption.png
+│ ├── boxplotIncomeGroup_MeatConsumption.png
+│ ├── MeatConsumptionMap.png
+│ └── LassoRegression_MeatConsumption.png
+│
+├── meat_consumption_analysis.Rmd # Full analysis in RMarkdown
+├── meat_consumption_analysis.R # Clean script with all analysis code
+├── meat_consumption_analysis.pdf # Final report (no code)
 └── README.md
----
+```
 
 ## 📊 Tools & Packages Used
 
