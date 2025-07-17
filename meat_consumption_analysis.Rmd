@@ -1,0 +1,276 @@
+---
+title: "The Economics of Eating Meat: A Global Data Analysis"
+author: "Kyrie Huerta"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(glmnet)
+library(knitr)
+library(ggplot2)
+library(countrycode)
+library(janitor)
+library(ggtext)
+library(viridis)
+library(rnaturalearth)
+library(sf)
+
+```
+
+## Personal Interest
+
+This analysis is rooted in personal experience. After the COVID-19 pandemic, I began suffering from chronic health issues that made eating a daily challenge. In search of relief, I cycled through various dietary approaches from gluten-free, dairy-free, and low-FODMAP. After years of trial and error, I was suggested a strict carnivore diet centered on high-quality animal products like grass-fed beef, pasture-raised eggs, and wild-caught fish. To my surprise, it brought significant improvements in my symptoms and gave me back a sense of control over my health.
+
+As I continued this way of eating, I noticed a growing number of people online on TikTok, Instagram, and YouTube—sharing similar experiences with animal-based diets. Many spoke about improvements in energy, digestion, and autoimmune symptoms. However, I also began to notice a common theme: the cost. Maintaining this kind of diet is expensive. It made me wonder how accessible is this way of eating to the average person?
+
+This project explores the relationship between economic development and per capita meat consumption across countries. By merging global data on GDP per capita from the World Bank with country level meat consumption data from FAOSTAT, I examine whether wealthier nations tend to consume more meat. The analysis focuses on trends over time and between countries to highlight potential economic disparities in access to meat-based diets. Instead of examining individual dietary outcomes, this analysis uses data to investigate how national economic conditions influence patterns of meat consumption globally.
+
+# Section 1: Data
+
+This analysis combines two global datasets that each contribute uniquely to the project’s research goals. The first, from FAOSTAT, reports annual per capita meat consumption by country. The second, from the World Bank, provides GDP per capita data over time. The meat dataset was filtered to include only food supply quantities across all meat types and grouped by country and year. The GDP data was reshaped from wide to long format to match the temporal structure of the meat data. Country names were manually standardized using a recoding process to ensure consistency prior to merging.
+
+The datasets were merged using country and year as key identifiers. Any rows with missing GDP or meat consumption data were removed to ensure complete and clean inputs for analysis and modeling. The final dataset includes r nrow(combined_data) observations. On average, countries consumed about r round(mean(combined_data$Meat_kg_per_capita), 1) kilograms of meat per capita annually, with an average GDP per capita of $r round(mean(combined_data$GDP_per_capita), 0). This merged and cleaned dataset provides a strong foundation for analyzing how economic development correlates with dietary behavior.
+
+```{r}
+# Load and clean data
+meat <- read_csv("FAOSTAT_data_meat_consumption.csv", show_col_types = FALSE) %>%
+  janitor::clean_names()
+
+gdp <- read_csv("GDP.PER.CAPITA.csv", skip = 4, show_col_types = FALSE) %>%
+  janitor::clean_names()
+
+# Clean meat data
+meat_clean <- meat %>%
+  filter(element == "Food supply quantity (kg/capita/yr)") %>%
+  group_by(area, year) %>%
+  summarise(Meat_kg_per_capita = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  rename(Country = area) %>%
+  mutate(
+    Country = recode(Country,
+      "United States of America" = "United States",
+      "Russian Federation" = "Russia",
+      "Viet Nam" = "Vietnam",
+      "Republic of Korea" = "South Korea",
+      "Iran (Islamic Republic of)" = "Iran",
+      "Egypt, Arab Rep." = "Egypt",
+      "China, mainland" = "China",
+      "United Kingdom of Great Britain and Northern Ireland" = "United Kingdom",
+      "Czechia" = "Czech Republic"
+    ),
+    year = as.integer(year)
+  )
+
+# Clean and reshape GDP data
+gdp_clean <- gdp %>%
+  filter(indicator_name == "GDP per capita (current US$)") %>%
+  rename(Country = country_name) %>%
+  select(Country, matches("^x[0-9]{4}$")) %>%
+  pivot_longer(
+    cols = -Country,
+    names_to = "year",
+    values_to = "GDP_per_capita"
+  ) %>%
+  mutate(
+    year = as.integer(str_remove(year, "^x")),
+    GDP_per_capita = as.numeric(GDP_per_capita)
+  ) %>%
+  drop_na()
+
+# Merge and clean
+combined_data <- inner_join(meat_clean, gdp_clean, by = c("Country", "year")) %>%
+  drop_na()
+
+```
+
+# Section 2: Analysis with Visuals
+
+We begin by exploring the connection between national income and dietary patterns, specifically meat consumption. The scatterplot below illustrates that, across countries, per capita meat consumption tends to increase as GDP per capita rises. However, this trend is not linear. At higher income levels, the curve starts to level out, meaning that after a certain point, making more money doesn’t lead to much more meat being eaten. This could be due to cultural habits, health choices, or environmental concerns that limit how much people actually want or need to consume.
+
+```{r scatterplot, fig.width=10, fig.height=7}
+ggplot(combined_data, aes(x = GDP_per_capita, y = Meat_kg_per_capita)) +
+  geom_point(size = 2.5, alpha = 0.7, color = "#0072B2") +
+  geom_smooth(method = "loess", se = FALSE, color = "#D55E00", linewidth = 1.3) +
+  scale_x_continuous(labels = scales::label_dollar(scale = 0.001, suffix = "K")) +
+  scale_y_continuous(labels = scales::label_number(accuracy = 1)) +
+  labs(
+    title = "Wealthier Nations Eat More Meat, But the Rise Slows",
+    subtitle = "Per capita meat consumption rises with GDP, then levels off at higher incomes",
+    x = "GDP per Capita (in Thousands of USD)",
+    y = "Meat Consumption (kg per Person per Year)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 13, margin = margin(b = 10)),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+To clarify the shape of this relationship, the next visualization applies a logarithmic transformation to GDP per capita. 
+
+```{r scatterplot-enhanced, fig.width=10, fig.height=7}
+model <- lm(Meat_kg_per_capita ~ log(GDP_per_capita), data = combined_data)
+r2 <- summary(model)$r.squared
+r2_label <- paste0("R² = ", round(r2, 2))
+
+ggplot(combined_data, aes(x = log(GDP_per_capita), y = Meat_kg_per_capita)) +
+  geom_point(aes(size = GDP_per_capita, color = Meat_kg_per_capita), alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1.2) +
+  scale_color_viridis_c(option = "viridis", name = "Meat\nConsumption") +
+  scale_size_continuous(range = c(1, 6), guide = "none") +
+  labs(
+    title = "Relationship Between GDP and Meat Consumption",
+    subtitle = "Bubble size = GDP per capita | Color = Meat consumption",
+    x = "Log(GDP per Capita)",
+    y = "Meat Consumption (kg/person/year)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid.major = element_line(color = "gray50"),
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(color = "white", face = "bold"),
+    axis.text = element_text(color = "white"),
+    plot.title = element_text(color = "white", face = "bold", size = 16),
+    plot.subtitle = element_text(color = "gray90", size = 12),
+    legend.text = element_text(color = "white"),
+    legend.title = element_text(color = "white")
+  ) +
+  annotate("label", x = 6.5, y = max(combined_data$Meat_kg_per_capita, na.rm = TRUE), 
+           label = r2_label, fill = "white", color = "black", size = 4.5)
+
+```
+
+The scatter plot above demonstrates a strong positive relationship between a country's economic development and its per capita meat consumption. By transforming GDP per capita using a logarithmic scale, the pattern becomes more linear and easier to interpret. Each point represents a country-year, with bubble size reflecting national income and color indicating the level of meat consumption. The red regression line shows a consistent upward trend, and the high \( R^2 \) value of 0.63 suggests that economic factors alone explain a substantial portion of the variation in global meat consumption. However, the spread of points around the line, especially at higher income levels also indicates that other influences, such as culture, geography, and policy, likely play a role in shaping national dietary patterns.
+
+
+```{r boxplot-income-group, fig.width=9, fig.height=7}
+combined_data <- combined_data %>%
+  mutate(income_group = case_when(
+    GDP_per_capita < 4000 ~ "Low Income",
+    GDP_per_capita < 12000 ~ "Middle Income",
+    TRUE ~ "High Income"
+  ))
+
+combined_data$income_group <- factor(combined_data$income_group,
+                                     levels = c("Low Income", "Middle Income", "High Income"))
+
+ggplot(combined_data, aes(x = income_group, y = Meat_kg_per_capita, fill = income_group)) +
+  geom_boxplot(color = "black", outlier.shape = 21, outlier.fill = "white", outlier.size = 2) +
+  scale_fill_manual(values = c(
+    "Low Income" = "#F0E442",
+    "Middle Income" = "#56B4E9",
+    "High Income" = "#D55E00"
+  )) +
+  labs(
+    title = "Higher Incomes, Heavier Plates?",
+    subtitle = "Meat consumption rises with income, but the jump is steepest between low and middle income",
+    x = "Income Group",
+    y = "Meat Consumption (kg per Person per Year)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 13, margin = margin(b = 10)),
+    axis.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+
+The boxplot shows a clear increase in meat consumption as income rises. The largest jump occurs between low- and middle-income countries, suggesting that early economic development brings the biggest shift in dietary patterns. However, the gap between middle and high-income countries is smaller, reinforcing the idea that meat intake eventually stabilizes. The presence of outliers across all groups also highlights that income isn’t the only factor influencing dietary choices. Regional norms, food availability, and cultural preferences play a role as well.
+
+
+```{r map, fig.width=12, fig.height=9}
+world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+combined_data <- combined_data %>%
+  mutate(iso3 = countrycode(Country, origin = "country.name", destination = "iso3c"))
+
+map_data <- combined_data %>%
+  group_by(iso3) %>%
+  summarise(mean_meat = mean(Meat_kg_per_capita, na.rm = TRUE))
+
+world_data <- left_join(world, map_data, by = c("iso_a3" = "iso3"))
+
+ggplot(world_data) +
+  geom_sf(aes(fill = mean_meat), color = "gray80", size = 0.1) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    na.value = "gray90",
+    name = "Avg. Meat\nConsumption (kg)"
+  ) +
+  labs(
+    title = "Average Meat Consumption by Country",
+    subtitle = "Higher meat consumption is generally observed in wealthier nations",
+    caption = "Data: FAOSTAT & World Bank"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    legend.title = element_text(face = "bold"),
+    axis.text = element_blank(),
+    panel.grid = element_blank()
+  )
+
+```
+
+The map reinforces earlier findings, clearly showing that higher meat consumption tends to be concentrated in wealthier regions such as North America, Western Europe, Australia, and parts of South America. In contrast, lower consumption is most common across Sub-Saharan Africa and South Asia, where GDP levels are generally lower. These geographic patterns suggest that economic access plays a significant role in shaping dietary habits globally.
+
+*Note: Some countries and territories are shaded gray due to missing or incomplete data from either the FAOSTAT or World Bank sources. These include many small island nations, territories, and a few countries for which data were unavailable or unmatched.*
+
+
+
+# Section 3: Predictive Modeling
+
+To evaluate the predictive strength of economic data, I employed LASSO regression to forecast a country’s meat consumption per capita using log-transformed GDP per capita as the sole predictor. The dataset was randomly split, reserving 10% for evaluation and training the model on the remaining 90%. I used 10-fold cross-validation with the cv.glmnet() function to select the optimal lambda value that minimizes test RMSE.
+
+```{r}
+model_data <- combined_data %>%
+  mutate(log_gdp = log(GDP_per_capita)) %>%
+  filter(is.finite(log_gdp)) %>%
+  select(Meat_kg_per_capita, log_gdp)
+
+set.seed(123)
+sample_index <- sample(1:nrow(model_data), 0.9 * nrow(model_data))
+train <- model_data[sample_index, ]
+test <- model_data[-sample_index, ]
+
+x_train <- model.matrix(Meat_kg_per_capita ~ log_gdp, data = train)
+x_test <- model.matrix(Meat_kg_per_capita ~ log_gdp, data = test)
+
+y_train <- train$Meat_kg_per_capita
+y_test <- test$Meat_kg_per_capita
+
+lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1)
+best_lambda <- lasso_cv$lambda.min
+
+```
+
+
+```{r}
+preds <- predict(lasso_cv, s = best_lambda, newx = x_test)
+rmse_eval <- sqrt(mean((y_test - preds)^2))
+rmse_eval
+```
+
+
+```{r}
+plot(lasso_cv)
+abline(v = log(best_lambda), col = "red", lty = 2, lwd = 2)
+```
+
+LASSO regression selected a lambda value of `r signif(best_lambda, 3)` that minimized the cross-validated test RMSE. The red dashed line in the plot above highlights this optimal value. The model was trained on 90% of the data, with the remaining 10% used for final evaluation. The final RMSE on the evaluation sample was `r round(rmse_eval, 2)`, suggesting that the model’s predictions differ from actual meat consumption by approximately 20.74 kilograms per person annually. This level of predictive accuracy is reasonable given the simplicity of the model. Future improvements could include the addition of regional indicators, interaction terms, or broader socioeconomic variables to increase explanatory power and reduce residual error.
+
